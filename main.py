@@ -1,75 +1,48 @@
+import chainlit as cl
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.prompts import PromptTemplate
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_community.llms import CTransformers, Ollama
+from langchain_community.llms import HuggingFaceHub
 from langchain.chains import RetrievalQA
-import chainlit as cl
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-from io import BytesIO
-import playsound
 import os
-#from gtts.lang import tts_lang
-
+import playsound
 
 filename = "abc.mp3"
-DB_FAISS_PATH = 'db\db_faiss'
+DB_FAISS_PATH = 'db/db_faiss'
 
-custom_prompt_template = """Use the following pieces of information to answer the user's question.
-If you don't know the answer, just say that you don't know, don't try to make up an answer.
-
-Context: {context}
-Question: {question}
-
-Only return the helpful answer below and nothing else.
-Helpful answer:
-"""
-
-def set_custom_prompt():
-    """
-    Prompt template for QA retrieval for each vectorstore
-    """
-    prompt = PromptTemplate(template=custom_prompt_template, input_variables=['context', 'question'])
-    return prompt
-
-#Retrieval QA Chain
-def retrieval_qa_chain(llm, prompt, db):
-    qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type='stuff', retriever=db.as_retriever(search_kwargs={'k': 2}),return_source_documents=True,chain_type_kwargs={'prompt': prompt} )
-    return qa_chain
-
-#Loading the model
-def load_llm():
-    # Load the locally downloaded model here
-    llm = CTransformers(
-        model = "TheBloke/Llama-2-7B-Chat-GGML",
-        model_type="llama",
-        max_new_tokens = 512,
-        temperature = 0.5
+def retrieval_qa_chain(llm, db):
+    return RetrievalQA.from_chain_type(
+        llm=llm, 
+        chain_type='stuff', 
+        retriever=db.as_retriever(search_kwargs={'k': 2}), 
+        return_source_documents=True
     )
-    return llm
 
-#QA Model Function
+def load_llm():
+    return HuggingFaceHub(
+        repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+        huggingfacehub_api_token='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',
+    )
+
 def qa_bot():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", model_kwargs={'device': 'cpu'})
     db = FAISS.load_local(DB_FAISS_PATH, embeddings, allow_dangerous_deserialization=True)
     llm = load_llm()
-    qa_prompt = set_custom_prompt()
-    qa = retrieval_qa_chain(llm, qa_prompt, db)
+    return retrieval_qa_chain(llm, db)
 
-    return qa
-
-#output function
 def final_result(query):
-    qa_result = qa_bot()
-    response = qa_result({'query': query})
-    return response
+    qa = qa_bot()
+    response = qa({'query': query})
+    helpful_answer = response['result'].split("Helpful Answer:")[1].strip()
+    return helpful_answer
 
 def generate_audio(text):
     tts = gTTS(text, lang='ta')
     tts.save(filename)
     playsound.playsound(filename)
-    
 
 @cl.on_chat_start
 async def start():
@@ -89,15 +62,14 @@ async def main(message: cl.Message):
     )
     cb.answer_reached = True
     res = await chain.acall(message.content, callbacks=[cb])
-    answer = res["result"]
+    answer = res['result'].split("Helpful Answer:")[1].strip()
     translated_answer = GoogleTranslator(source = 'auto', target='ta').translate(answer)
     generate_audio(translated_answer)
     await cl.Message(content=translated_answer, elements =  [
         cl.Audio(name = 'audiofile.mp3', path = "./abc.mp3", display="inline")
     ]).send()
     os.remove(filename)
+ 
 
 
 
-    #audio = text_to_audio(translated_answer,language='ta',cleanup_hook=None)
-    #auto_play(audio)
